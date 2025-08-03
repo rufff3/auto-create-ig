@@ -67,7 +67,6 @@ pip install selenium webdriver-manager colorama pyfiglet
 - Google Chrome versi terbaru
 - Sistem operasi Windows/Linux
 
-📞 KONTAK / INFO LANJUT
 -----------------------
 Gunakan script ini hanya untuk edukasi.
 Penulis script tidak bertanggung jawab atas penyalahgunaan.

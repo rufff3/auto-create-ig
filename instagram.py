@@ -13,7 +13,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from colorama import Fore, Style, init
 import pyfiglet
-
 init(autoreset=True)
 
 USER_AGENTS = [
@@ -24,52 +23,177 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.114 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.2592.81",
 ]
-
 def tampilkan_banner(teks, warna=Fore.CYAN, font="slant"):
     banner_text = pyfiglet.figlet_format(teks, font=font, width=100)
     print(Style.BRIGHT + warna + banner_text)
-
 def generate_random_string(length=8):
     letters = string.ascii_lowercase
     return ''.join(random.choice(letters) for i in range(length))
-
 def create_project_folders():
     if not os.path.exists('cookies'): os.makedirs('cookies')
     if not os.path.exists('data'): os.makedirs('data')
-
+def baca_semua_akun(file_path='akun.txt'):
+    """Membaca semua akun dari file dan menyimpannya dalam list."""
+    list_akun = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            akun_buffer = {}
+            for line in file:
+                line = line.strip()
+                if '=========================' in line:
+                    if akun_buffer.get('username'):
+                        list_akun.append(akun_buffer)
+                    akun_buffer = {}
+                elif ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip().lower()
+                    value = value.strip()
+                    if key in ['username', 'sandi', 'email']:
+                        akun_buffer[key] = value
+            if akun_buffer.get('username'):
+                list_akun.append(akun_buffer)
+    except FileNotFoundError:
+        print(f"{Fore.RED}Error: File '{file_path}' tidak ditemukan.")
+    return list_akun
+def simpan_akun_tersisa(akun_tersisa, file_path='akun.txt'):
+    with open(file_path, 'w', encoding='utf-8') as f:
+        for i, akun in enumerate(akun_tersisa):
+            f.write(f"email: {akun['email']}\n")
+            f.write(f"username: {akun['username']}\n")
+            f.write(f"sandi: {akun['sandi']}\n")
+            if i < len(akun_tersisa) - 1:
+                f.write("=========================\n")
+def handle_manual_verification(driver, wait, email_address):
+    try:
+        print("\n" + "="*50)
+        print("📧 VERIFIKASI EMAIL DIPERLUKAN 📧")
+        print(f"1. Buka browser dan pergi ke https://tempmail.ac.id/")
+        print(f"2. Login dengan email: {email_address}")
+        print("3. Buka email terbaru dari Instagram dan lihat 6 digit kodenya.")
+        print("="*50)
+        otp_code = ""
+        while not (otp_code.isdigit() and len(otp_code) == 6):
+            otp_code = input(">> Masukkan 6 digit kode OTP di sini dan tekan Enter: ")
+        print(f"Kode {otp_code} diterima. Melanjutkan proses otomatis...")
+        otp_input_xpath = "//input[@name='email']"
+        otp_input = wait.until(EC.element_to_be_clickable((By.XPATH, otp_input_xpath)))
+        otp_input.click()
+        otp_input.clear()
+        time.sleep(0.5)
+        for digit in otp_code:
+            otp_input.send_keys(digit)
+            time.sleep(0.3)
+        time.sleep(1.5)
+        tombol_xpath = (
+            "//span[normalize-space(text())='Continue' or normalize-space(text())='Lanjutkan']/ancestor::div[@role='button' or @tabindex]"
+        )
+        tombol = wait.until(EC.presence_of_element_located((By.XPATH, tombol_xpath)))
+        try:
+            if tombol.is_enabled() and tombol.is_displayed():
+                tombol.click()
+            else:
+                print("⚠️ Tombol tidak aktif, klik paksa via JavaScript...")
+                driver.execute_script("arguments[0].click();", tombol)
+        except:
+            print("⚠️ Klik biasa gagal, pakai JS klik...")
+            driver.execute_script("arguments[0].click();", tombol)
+        time.sleep(2)
+        print("✅ Verifikasi dikonfirmasi.")
+        return True
+    except Exception as e:
+        print(f"❌ Gagal saat proses verifikasi manual: {e}")
+        return False
+def login_instagram(email, username, password):
+    print(f"\n{Style.BRIGHT}{Fore.CYAN}--- MEMPROSES AKUN: {username} ---{Style.RESET_ALL}")
+    driver = None
+    try:
+        options = webdriver.ChromeOptions()
+        prefs = {"credentials_enable_service": False, "profile.password_manager_enabled": False}
+        options.add_experimental_option("prefs", prefs)
+        options.add_argument("--log-level=3")
+        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        options.add_argument("--headless=new") 
+        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+        wait = WebDriverWait(driver, 15)
+        driver.get("https://www.instagram.com/accounts/login/")
+        time.sleep(2)
+        wait.until(EC.visibility_of_element_located((By.NAME, "username"))).send_keys(username)
+        wait.until(EC.visibility_of_element_located((By.NAME, "password"))).send_keys(password)
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']"))).click()
+        print("Tombol login diklik. Menganalisis halaman berikutnya...")
+        time.sleep(5)
+        try:
+            captcha_keywords_xpath = "//*[contains(text(), 'Confirm you') or contains(text(), 'Konfirmasikan bahwa Anda adalah manusia')]"
+            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, captcha_keywords_xpath)))
+            return "CAPTCHA_DETECTED", driver
+        except TimeoutException: pass
+        try:
+            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, "//*[contains(., 'Check your email') or contains(., 'Enter the code')]")))
+            if not handle_manual_verification(driver, wait, email):
+                return "EMAIL_VERIF_FAILED", driver
+        except TimeoutException:
+            print("Deteksi: Tidak ada verifikasi email.")
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//*[local-name()='svg' and @aria-label='Home']")))
+        return "SUCCESS", driver
+    except Exception as e:
+        print(f"\n{Fore.RED}❌ TERJADI ERROR KRITIS PADA AKUN {username}: {e}")
+        if driver: driver.quit()
+        return "CRITICAL_ERROR", None
+def menu_login_akun():
+    semua_akun = baca_semua_akun()
+    akun_yang_disimpan = semua_akun.copy()
+    if not semua_akun:
+        print(f"{Fore.YELLOW}Tidak ada akun di 'akun.txt' untuk diproses.")
+        return
+    for i, akun in enumerate(semua_akun):
+        driver_instance = None
+        status, driver_instance = login_instagram(akun['email'], akun['username'], akun['sandi'])
+        print("\n" + "#"*40)
+        print(f"ANALISIS AKHIR UNTUK {akun['username']}:") 
+        if status == "SUCCESS":
+            print(f"{Fore.GREEN}✅ STATUS: Login Berhasil!")
+        elif status == "CAPTCHA_DETECTED":
+            print(f"{Fore.YELLOW}🤖 STATUS: Terdeteksi CAPTCHA.")
+            print(f"Menghapus akun {akun['username']} dari daftar...")
+            akun_yang_disimpan = [a for a in akun_yang_disimpan if a['username'] != akun['username']]
+            simpan_akun_tersisa(akun_yang_disimpan)
+            print(f"{Fore.GREEN}Akun telah dihapus dari akun.txt.")
+        elif status == "EMAIL_VERIF_FAILED":
+            print(f"{Fore.RED}❌ STATUS: Proses verifikasi email GAGAL!")
+        else:
+            print(f"{Fore.RED}🔥 STATUS: Login Gagal atau Error Kritis.")
+        print("#"*40)
+        if driver_instance:
+            driver_instance.quit()
+        if i < len(semua_akun) - 1:
+            print(f"\n--- Jeda 10 detik sebelum lanjut ke akun berikutnya ---")
+            time.sleep(10)
 def menu_buat_akun():
     create_project_folders()
     BLACKLISTED_DOMAINS = ["innovasolar.me", "oliq.tech", "gijo.me", "edushort.me"]
-    
     try:
         jumlah_akun = int(input(f"{Style.BRIGHT}{Fore.MAGENTA}Berapa banyak akun yang ingin Anda buat? {Style.RESET_ALL}"))
     except ValueError:
         print(f"{Fore.RED}Input tidak valid. Harap masukkan angka.")
         return
-
     for i in range(jumlah_akun):
         print(f"\n{Style.BRIGHT}{Fore.CYAN}--- MEMBUAT AKUN KE-{i+1} DARI {jumlah_akun} ---{Style.RESET_ALL}")
         driver = None
         try:
             proxy = ""
-            
             options = webdriver.ChromeOptions()
             options.add_experimental_option("excludeSwitches", ["enable-automation"])
             options.add_experimental_option('useAutomationExtension', False)
             options.add_argument("--disable-notifications")
             options.add_argument("--log-level=3")
             options.add_argument("--headless=new")
-        
             user_agent_terpilih = random.choice(USER_AGENTS)
             options.add_argument(f'user-agent={user_agent_terpilih}')
             print(f"{Fore.BLUE}INFO: User-Agent -> {user_agent_terpilih[:50]}...")
-
             if proxy:
                 options.add_argument(f'--proxy-server={proxy}')
-            
             driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
             wait = WebDriverWait(driver, 60)
-
             print(f"{Fore.BLUE}➡️ Menjalankan pendaftaran & verifikasi...{Style.RESET_ALL}")
             driver.get("https://www.instagram.com/accounts/emailsignup/")
             instagram_tab = driver.current_window_handle
@@ -133,7 +257,6 @@ def menu_buat_akun():
             beranda_termuat_xpath = "//*[local-name()='svg' and @aria-label='Home']"
             wait.until(EC.presence_of_element_located((By.XPATH, beranda_termuat_xpath)))
             print(f"{Style.BRIGHT}{Fore.GREEN}✅ Pendaftaran Instagram Berhasil!{Style.RESET_ALL}")
-
             print(f"{Fore.BLUE}📝 Menyimpan detail akun...{Style.RESET_ALL}")
             try:
                 with open("akun.txt", "a", encoding="utf-8") as f:
@@ -141,40 +264,33 @@ def menu_buat_akun():
                 print(f"{Fore.GREEN}✅ Akun disimpan di akun.txt{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}⚠️ Gagal menyimpan akun: {e}{Style.RESET_ALL}")
-
             print(f"{Fore.BLUE}🍪 Menyimpan cookies Instagram...{Style.RESET_ALL}")
             instagram_cookies = driver.get_cookies()
             cookie_file_path = os.path.join('cookies', f'{username}_instagram.json')
             with open(cookie_file_path, 'w') as f: json.dump(instagram_cookies, f)
             print(f"{Fore.GREEN}✅ Cookies untuk '{username}' berhasil disimpan.{Style.RESET_ALL}")
-
         except Exception as e:
             print(f"\n{Style.BRIGHT}{Fore.RED}❌ Gagal membuat akun ke-{i+1}: {e}{Style.RESET_ALL}")
-        
         finally:
             if driver:
                 print(f"{Fore.YELLOW}🎉 Proses untuk akun ini selesai. Menutup browser...{Style.RESET_ALL}")
                 driver.quit()
-
 if __name__ == "__main__":
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')
-        
-        tampilkan_banner("Auto Create", warna=Fore.MAGENTA)
-        tampilkan_banner("Instagram", warna=Fore.BLUE, font="small")
-
-        print(f"{Fore.GREEN}[1] Buat Akun Instagram")
-        print(f"{Fore.YELLOW}[2] Keluar")
+        tampilkan_banner("Instagram BOT", warna=Fore.MAGENTA)
+        print(f"{Fore.GREEN}[1] Buat Akun Instagram (Otomatis & Headless)")
+        print(f"{Fore.CYAN}[2] Login & Kelola Akun dari file.txt (Headless)")
+        print(f"{Fore.YELLOW}[3] Keluar")
         print(Style.BRIGHT + Fore.MAGENTA + "="*40)
-        
         pilihan = input(f"{Style.BRIGHT}Pilih menu: {Style.RESET_ALL}")
-        
         if pilihan == '1':
             menu_buat_akun()
         elif pilihan == '2':
+            menu_login_akun()
+        elif pilihan == '3':
             print(f"{Fore.YELLOW}Terima kasih! Keluar dari program.")
             break
         else:
             print(f"{Fore.RED}Pilihan tidak valid.")
-        
         input(f"\n{Fore.YELLOW}Tekan Enter untuk kembali ke menu...")
